@@ -17,9 +17,11 @@ package controllers
 
 import scalaz._
 import Scalaz._
+import scalaz.effect.IO
+import scalaz.EitherT._
+import scalaz.Validation
+//import scalaz.Validation.FlatMap._
 import scalaz.NonEmptyList._
-
-import scalaz.Validation._
 import models._
 import controllers.stack._
 import controllers.stack.APIAuthElement

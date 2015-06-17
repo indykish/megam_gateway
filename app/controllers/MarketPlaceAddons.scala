@@ -15,12 +15,13 @@
 */
 package controllers
 
-import scala.collection.immutable.Map
 import scalaz._
 import Scalaz._
+import scalaz.effect.IO
+import scalaz.EitherT._
+import scalaz.Validation
+//import scalaz.Validation.FlatMap._
 import scalaz.NonEmptyList._
-
-import scalaz.Validation._
 import models._
 import controllers.stack._
 import controllers.stack.APIAuthElement
@@ -31,6 +32,8 @@ import org.megam.common.amqp._
 import play.api._
 import play.api.mvc._
 import play.api.mvc.Result
+import scala.collection.immutable.Map
+
 /**
  * @author rajthilak
  *
@@ -116,8 +119,7 @@ object MarketPlaceAddons extends Controller with APIAuthElement {
   /*
    * GET: findByAppDefnsName: Show the MarketPlaceAddons for a  node name per user(by email)
    * Email grabbed from header
-   * Output: JSON (MarketPlaceAddonsResults)  
-   **/
+   * Output: JSON (MarketPlaceAddonsResults)   
   def show(id: String) = StackAction(parse.tolerantText) { implicit request =>
     play.api.Logger.debug(("%-20s -->[%s]").format("controllers.MarketPlaceAddons", "show:Entry"))
 
@@ -144,5 +146,6 @@ object MarketPlaceAddons extends Controller with APIAuthElement {
     }).fold(succ = { a: Result => a }, fail = { t: Throwable => Status(BAD_REQUEST)(t.getMessage) })
 
   }
+  */
 
 }

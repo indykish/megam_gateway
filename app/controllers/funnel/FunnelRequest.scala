@@ -17,12 +17,16 @@ package controllers.funnel
 
 import scalaz._
 import Scalaz._
+import scalaz.effect.IO
+import scalaz.EitherT._
 import scalaz.Validation
+//import scalaz.Validation.FlatMap._
+import scalaz.NonEmptyList._
 import jp.t2v.lab.play2.stackc.{ RequestWithAttributes, RequestAttributeKey, StackableController }
 
 import controllers.funnel._
 import controllers.funnel.FunnelErrors._
-import controllers.stack.SecurityActions._
+import controllers.stack.HeaderConstants._
 import controllers.stack.GoofyCrypto._
 
 /**

@@ -16,41 +16,45 @@
 package models
 
 import scalaz._
-import scalaz.syntax.SemigroupOps
-import scalaz.NonEmptyList._
-import scalaz.Validation._
+import Scalaz._
 import scalaz.effect.IO
 import scalaz.EitherT._
-import Scalaz._
+import scalaz.Validation
+//import scalaz.Validation.FlatMap._
+import scalaz.NonEmptyList._
+import scalaz.syntax.SemigroupOps
 import controllers.stack._
 import controllers.Constants._
 import controllers.funnel.FunnelErrors._
 import models._
+import models.riak._
 import org.megam.util.Time
 import com.stackmob.scaliak._
-import com.basho.riak.client.query.indexes.{ RiakIndexes, IntIndex, BinIndex }
-import com.basho.riak.client.http.util.{ Constants => RiakConstants }
+import com.basho.riak.client.core.query.indexes.{RiakIndexes, StringBinIndex, LongIntIndex }
+import com.basho.riak.client.core.util.{ Constants => RiakConstants }
 import org.megam.common.riak.{ GSRiak, GunnySack }
 import org.megam.common.uid._
 import net.liftweb.json._
 import net.liftweb.json.scalaz.JsonScalaz.{ Result, UncategorizedError }
 import java.nio.charset.Charset
 
+
+
 /**
  * @author ram
  * This would actually be a link to the Nodes bucket. which would allow us to use link-walking
  */
-case class RequestInputNewNode(node_id: String, node_name: String, req_type: String, command: NodeCommand) {
-  val json = "\",\"node_id\":\"" + node_id + "\",\"node_name\":\"" + node_name + "\",\"req_type\":\"" + req_type + "\",\"command\": " + command.json
+case class RequestInputNewNode(node_id: String, node_name: String, req_type: String) {
+  val json = "\",\"node_id\":\"" + node_id + "\",\"node_name\":\"" + node_name + "\",\"req_type\":\"" + req_type + "\""
 }
 
-case class RequestInputExistNode(node_name: String, req_type: String, command: NodeCommand) {
-  val json = "\"node_name\":\"" + node_name + "\",\"req_type\":\"" + req_type + "\",\"command\": " + command.json
+case class RequestInputExistNode(node_id :String, node_name: String, req_type: String) {
+  val json = "\"node_id\":\"" + node_id + "\",\"node_name\":\"" + node_name + "\",\"req_type\":\"" + req_type + "\""
 }
 
-case class RequestResult(id: String, node_id: String, node_name: String, req_type: String, command: NodeCommand, created_at: String) {
+case class RequestResult(id: String, node_id: String, node_name: String, req_type: String, created_at: String) {
   val json = "{\"id\": \"" + id + "\",\"node_id\":\"" + node_id + "\",\"node_name\":\"" + node_name +
-    "\",\"req_type\":\"" + req_type + "\",\"command\": " + command.json + ",\"created_at\":\"" + created_at + "\"}"
+    "\",\"req_type\":\"" + req_type + ",\"created_at\":\"" + created_at + "\"}"
 
   def toJValue: JValue = {
     import net.liftweb.json.scalaz.JsonScalaz.toJSON
@@ -68,7 +72,7 @@ case class RequestResult(id: String, node_id: String, node_name: String, req_typ
 
 object RequestResult {
 
-  def apply = new RequestResult(new String(), new String(), new String(), new String(), NodeCommand.empty, new String())
+  def apply = new RequestResult(new String(), new String(), new String(), new String(), new String())
 
   def fromJValue(jValue: JValue)(implicit charset: Charset = UTF8Charset): Result[RequestResult] = {
     import net.liftweb.json.scalaz.JsonScalaz.fromJSON
@@ -77,7 +81,7 @@ object RequestResult {
     fromJSON(jValue)(nrsser.reader)
   }
 
-  def fromJson(json: String): Result[RequestResult] = (Validation.fromTryCatch {
+  def fromJson(json: String): Result[RequestResult] = (Validation.fromTryCatch[net.liftweb.json.JValue] {
     parse(json)
   } leftMap { t: Throwable =>
     UncategorizedError(t.getClass.getCanonicalName, t.getMessage, List())
@@ -91,11 +95,11 @@ object Requests {
 
   implicit def RequestResultsSemigroup: Semigroup[RequestResults] = Semigroup.instance((f1, f2) => f1.append(f2))
 
-  private def riak: GSRiak = GSRiak(MConfig.riakurl, "requests")
+  private val riak = GWRiak( "requests")
 
   val metadataKey = "Request"
   val newnode_metadataVal = "New Request Creation"
-  val newnode_bindex = BinIndex.named("nodeId")
+  val newnode_bindex = "nodeId"
 
   /**
    * A private method which chains computation to make GunnySack for new nodewhen provided with an input json, Option[node_name].
@@ -109,7 +113,7 @@ object Requests {
 
     //Does this failure get propagated ? I mean, the input json parse fails ? I don't think so.
     //This is a potential bug.
-    val ripNel: ValidationNel[Throwable, RequestInputNewNode] = (Validation.fromTryCatch {
+    val ripNel: ValidationNel[Throwable, RequestInputNewNode] = (Validation.fromTryCatch[models.RequestInputNewNode] {
       parse(input).extract[RequestInputNewNode]
     } leftMap { t: Throwable => new MalformedBodyError(input, t.getMessage) }).toValidationNel //capture failure
 
@@ -140,33 +144,33 @@ object Requests {
 
     //Does this failure get propagated ? I mean, the input json parse fails ? I don't think so.
     //This is a potential bug.
-    val ripNel: ValidationNel[Throwable, RequestInputExistNode] = (Validation.fromTryCatch {
+    val ripNel: ValidationNel[Throwable, RequestInputExistNode] = (Validation.fromTryCatch[models.RequestInputExistNode] {
       parse(input).extract[RequestInputExistNode]
     } leftMap { t: Throwable => new MalformedBodyError(input, t.getMessage) }).toValidationNel //capture failure
 
     play.api.Logger.debug(("%-20s -->[%s]").format("models.Requests:rip", ripNel))
     for {
       rip <- ripNel
-      aor <- (models.Nodes.findByNodeName(List(rip.node_name).some) leftMap { t: NonEmptyList[Throwable] => t })
       uir <- (UID(MConfig.snowflakeHost, MConfig.snowflakePort, "rip").get leftMap { ut: NonEmptyList[Throwable] => ut })      
     } yield {
-      val node_id = aor.list filter (nelwop => nelwop.isDefined) map { nelnor: Option[NodeResult] =>
-        (if (nelnor.isDefined) { //we only want to use the Some, ignore None. Hence a pattern match wasn't used here.
-          nelnor.get.id
-        }).asInstanceOf[String]
-      }
-      val bvalue = Set(node_id(0))
-      val json = "{\"id\": \"" + (uir.get._1 + uir.get._2) + "\",\"node_id\":\"" + node_id(0) + "\"," + rip.json + ",\"created_at\":\"" + Time.now.toString + "\"}"
+      //val node_id = Array("001change code here")
+      val bvalue = Set(rip.node_id)
+      val json = "{\"id\": \"" + (uir.get._1 + uir.get._2) + "\"," + rip.json + ",\"created_at\":\"" + Time.now.toString + "\"}"
       new GunnySack((uir.get._1 + uir.get._2), json, RiakConstants.CTYPE_TEXT_UTF8, None,
         Map(metadataKey -> newnode_metadataVal), Map((newnode_bindex, bvalue))).some
+       
     }    
   }  
 
+  
+  
+  
+  
   /*
    * create new Request with the new 'Nodename' of the node provide as input.
    * A index name nodeID will point to the "nodes" bucket
    */
-  def createforNewNode(input: String): ValidationNel[Throwable, Option[Tuple4[String, NodeCommand, String,String]]] = {
+  def createforNewNode(input: String): ValidationNel[Throwable, Option[Tuple3[String, String,String]]] = {
     play.api.Logger.debug(("%-20s -->[%s]").format("models.Requests", "create:Entry"))
     play.api.Logger.debug(("%-20s -->[%s]").format("json", input))
 
@@ -178,10 +182,10 @@ object Requests {
           val req_result = parse(gs.get.value).extract[RequestResult]
           play.api.Logger.debug(("%-20s -->[%s]%nwith%n----%n%s").format("Request.created successfully", "input", input))
           maybeGS match {
-            case Some(thatGS) => Tuple4(thatGS.key, req_result.command, req_result.node_name,req_result.req_type).some.successNel[Throwable]
+            case Some(thatGS) => Tuple3(thatGS.key, req_result.node_name,req_result.req_type).some.successNel[Throwable]
             case None => {
               play.api.Logger.warn(("%-20s -->[%s]").format("Request.created success", "Scaliak returned => None. Thats OK."))
-              (gs.get.key, req_result.command, req_result.node_name, req_result.req_type).some.successNel[Throwable]
+              (gs.get.key, req_result.node_name, req_result.req_type).some.successNel[Throwable]
             }
           }
         }
@@ -192,22 +196,22 @@ object Requests {
    * create new Request with the existing 'Nodename' of the nodename provide as input.
    * A index name nodeID will point to the "nodes" bucket
    */
-  def createforExistNode(input: String): ValidationNel[Throwable, Option[Tuple4[String, NodeCommand, String,String]]] = {
+  def createforExistNode(input: String): ValidationNel[Throwable, Option[Tuple3[String,String,String]]] = {
     play.api.Logger.debug(("%-20s -->[%s]").format("models.Requests", "create:Entry"))
     play.api.Logger.debug(("%-20s -->[%s]").format("json", input))
-
+    
     (mkGunnySackforExistNode(input) leftMap { err: NonEmptyList[Throwable] =>
       err
     }).flatMap { gs: Option[GunnySack] =>
       (riak.store(gs.get) leftMap { t: NonEmptyList[Throwable] => t }).
         flatMap { maybeGS: Option[GunnySack] =>
           val req_result = parse(gs.get.value).extract[RequestResult]
-          play.api.Logger.debug(("%-20s -->[%s]%nwith%n----%n%s").format("Request.created successfully", "input", input))
+          play.api.Logger.debug(("%-20s -->[%s]%nwith%n----%n%s").format("Request.created successfully--------------------------------------------------------------", "input", input))
           maybeGS match {
-            case Some(thatGS) => Tuple4(thatGS.key, req_result.command, req_result.node_name,req_result.req_type).some.successNel[Throwable]
+            case Some(thatGS) => Tuple3(thatGS.key, req_result.node_name, req_result.req_type).some.successNel[Throwable]
             case None => {
               play.api.Logger.warn(("%-20s -->[%s]").format("Request.created success", "Scaliak returned => None. Thats OK."))
-              (gs.get.key, req_result.command, req_result.node_name,req_result.req_type).some.successNel[Throwable]
+              (gs.get.key, req_result.node_name,req_result.req_type).some.successNel[Throwable]
             }
           }
         }
@@ -229,7 +233,7 @@ object Requests {
         }).toValidationNel.flatMap { xso: Option[GunnySack] =>
           xso match {
             case Some(xs) => {
-              (Validation.fromTryCatch {
+              (Validation.fromTryCatch[models.RequestResult] {
                 parse(xs.value).extract[RequestResult]
               } leftMap { t: Throwable =>
                 new ResourceItemNotFound(reqName, t.getMessage)
@@ -247,12 +251,14 @@ object Requests {
 
   }
 
+  
+  
   /*
    * An IO wrapped finder using an email. Upon fetching the account_id for an email, 
    * the nodenames are listed on the index (account.id) in bucket `Nodes`.
    * Using a "nodename" as key, return a list of ValidationNel[List[RequestResult]] 
    * Takes an email, and returns a Future[ValidationNel, List[Option[RequestResult]]]
-   */
+   
   def findByNodeName(nodeNameList: Option[List[String]]): ValidationNel[Throwable, RequestResults] = {
     play.api.Logger.debug(("%-20s -->[%s]").format("models.Request", "findByNodeName:Entry"))
     play.api.Logger.debug(("%-20s -->[%s]").format("nodeNameList", nodeNameList))
@@ -264,7 +270,7 @@ object Requests {
         //that. This is justa  hack for now. It calls for much more elegant soln.
         (nelnr.list filter (nelwop => nelwop.isDefined) map { nelnor: Option[NodeResult] =>
           (if (nelnor.isDefined) { //we only want to use the Some, ignore None. Hence a pattern match wasn't used here.
-            val bindex = BinIndex.named("")
+            val bindex = ""
             val bvalue = Set("")
             val metadataVal = "Nodes-name"
             play.api.Logger.debug(("%-20s -->[%s]").format("models.Request1", nelnor))
@@ -284,14 +290,14 @@ object Requests {
     }.run.map(_.validation).unsafePerformIO
     res.getOrElse(new ResourceItemNotFound(nodeNameList.map(m => m.mkString("[", ",", "]")).get, "requests = nothing found.").failureNel[RequestResults])
 
-  }
+  }*/
 
   /*
    * An IO wrapped finder using an email. Upon fetching the node results for an email, 
    * the nodeids are listed in bucket `Requests`.
    * Using a "requestid" as key, return a list of ValidationNel[List[RequestResult]] 
    * Takes an email, and returns a Future[ValidationNel, List[Option[RequestResult]]]
-   */
+   *
   def findByEmail(email: String): ValidationNel[Throwable, RequestResults] = {
     play.api.Logger.debug(("%-20s -->[%s]").format("models.Request", "findByEmail:Entry"))
     play.api.Logger.debug(("%-20s -->[%s]").format("email", email))
@@ -303,7 +309,7 @@ object Requests {
         //this is ugly, since what we receive from Nodes always contains one None. We need to filter
         //that. This is justa  hack for now. It calls for much more elegant soln.
         (nelnr.list filter (nelwop => nelwop.isDefined) map { nelnor: Option[NodeResult] =>
-          val bindex = BinIndex.named("")
+          val bindex = ""
           val bvalue = Set("")
           val metadataVal = "Nodes-name"
           play.api.Logger.debug(("%-20s -->[%s]").format("models.Request1", nelnor))
@@ -321,6 +327,6 @@ object Requests {
     }.run.map(_.validation).unsafePerformIO
     play.api.Logger.debug(("%-20s -->[%s]").format("models.Request", res))
     res.getOrElse(new ResourceItemNotFound(email, "requests = nothing found.").failureNel[RequestResults])
-  }
+  }*/
 
 }

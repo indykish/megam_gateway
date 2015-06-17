@@ -44,16 +44,7 @@ import play.api.Logger
 
 object SecurityActions {
 
-  val X_Megam_EMAIL = "X-Megam-EMAIL"
-  val X_Megam_APIKEY = "X-Megam-APIKEY"
-  val X_Megam_DATE = "X-Megam-DATE"
-  val X_Megam_HMAC = "X-Megam-HMAC"
-
-  val Content_Type = "Content-Type"
-  val application_json = "application/json"
-  val Accept = "Accept"
-  val application_vnd_megam_json = "application/vnd.megam+json"
-
+ 
   def Authenticated[A](req: FunnelRequestBuilder[A]): ValidationNel[Throwable, Option[String]] = {
     Logger.debug(("%-20s -->[%s]").format("SecurityActions", "Authenticated:Entry"))
     req.funneled match {
@@ -94,10 +85,10 @@ object SecurityActions {
             |%-10s -> %s
             |%-10s -> %s
             |%-10s -> %s""".format("email", fres.email, "api_key", fres.api_key, "authority", fres.authority).stripMargin)
-            .some).right[NonEmptyList[Error]].pure[IO]
+            .some).right[NonEmptyList[Throwable]].pure[IO]
         } else {
           (nels((CannotAuthenticateError("""Authorization failure for 'email:' HMAC doesn't match: '%s'."""
-            .format(fres.email).stripMargin, "", UNAUTHORIZED))): NonEmptyList[Error]).left[Option[String]].pure[IO]
+            .format(fres.email).stripMargin, "", UNAUTHORIZED))): NonEmptyList[Throwable]).left[Option[String]].pure[IO]
         }
       }
     } yield found).run.map(_.validation).unsafePerformIO()
@@ -118,7 +109,7 @@ object GoofyCrypto {
     val digest = MessageDigest.getInstance(MD5)
     digest.update(content.getOrElse(new String()).getBytes)
     val md5b = new String(Base64.encodeBase64(digest.digest()))
-    Logger.debug(("%-20s -->[%s]").format("MD5 OUTPUT", md5b))
+    Logger.debug(("%-20s -->[%s]").format("MD5 OUTPUT==============================>", md5b))
     md5b.some
   }
 
@@ -134,6 +125,7 @@ object GoofyCrypto {
     mac.init(signingKey)
     val rawHmac = mac.doFinal(toEncode.getBytes())
     val hmacAsByt = dumpByt(rawHmac.some)
+    Logger.debug(("%-20s -->[%s]").format("HMAC OUTPUT===========================>", hmacAsByt))
     hmacAsByt
   }
 

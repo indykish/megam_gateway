@@ -17,20 +17,26 @@ package models
 
 import scalaz._
 import Scalaz._
+import scalaz.effect.IO
+import scalaz.EitherT._
 import scalaz.Validation
+//import scalaz.Validation.FlatMap._
+import scalaz.NonEmptyList._
+import com.stackmob.scaliak._
+import org.megam.common.riak.{ GSRiak, GunnySack }
+import org.megam.common.uid.UID
 import org.megam.util.Time
 import net.liftweb.json._
 import net.liftweb.json.scalaz.JsonScalaz._
 import java.nio.charset.Charset
-import com.stackmob.scaliak._
-import com.basho.riak.client.query.indexes.{ RiakIndexes, IntIndex, BinIndex }
-import com.basho.riak.client.http.util.{ Constants => RiakConstants }
-import org.megam.common.riak.{ GSRiak, GunnySack }
-import org.megam.common.uid.UID
+import com.basho.riak.client.core.query.indexes.{ RiakIndexes, StringBinIndex, LongIntIndex }
+import com.basho.riak.client.core.util.{ Constants => RiakConstants }
 import models.cache._
+import models.riak._
 import controllers.funnel.FunnelErrors._
 import controllers.Constants._
 import controllers.stack.MConfig
+
 /**
  * @author rajthilak
  * authority
@@ -54,7 +60,7 @@ case class AccountResult(id: String, email: String, api_key: String, authority: 
 }
 
 object AccountResult {
-  
+
   def apply(id: String, email: String, api_key: String, authority: String) = new AccountResult(id, email, api_key, authority, Time.now.toString)
 
   def apply(email: String): AccountResult = AccountResult("not found", email, new String(), new String())
@@ -66,7 +72,7 @@ object AccountResult {
     fromJSON(jValue)(acctser.reader)
   }
 
-  def fromJson(json: String): Result[AccountResult] = (Validation.fromTryCatch {
+  def fromJson(json: String): Result[AccountResult] = (Validation.fromTryCatch[net.liftweb.json.JValue] {
     parse(json)
   } leftMap { t: Throwable =>
     UncategorizedError(t.getClass.getCanonicalName, t.getMessage, List())
@@ -80,7 +86,7 @@ object Accounts {
 
   implicit val formats = DefaultFormats
 
-  private def riak: GSRiak = GSRiak(MConfig.riakurl, "accounts")
+  private val riak = GWRiak("accounts")
   /**
    * Parse the input body when you start, if its ok, then we process it.
    * Or else send back a bad return code saying "the body contains invalid character, with the message received.
@@ -89,7 +95,7 @@ object Accounts {
   def create(input: String): ValidationNel[Throwable, Option[AccountResult]] = {
     play.api.Logger.debug(("%-20s -->[%s]").format("models.Accounts", "create:Entry"))
     play.api.Logger.debug(("%-20s -->[%s]").format("input json", input))
-    (Validation.fromTryCatch {
+    (Validation.fromTryCatch[models.AccountInput] {
       parse(input).extract[AccountInput]
     } leftMap { t: Throwable => new MalformedBodyError(input, t.getMessage)
     }).toValidationNel.flatMap { m: AccountInput =>
@@ -98,11 +104,10 @@ object Accounts {
         case Success(uid) => {
           val metadataKey = "Field"
           val metadataVal = "1002"
-          val bindex = BinIndex.named("accountId")
+          val bindex = "accountId"
           val bvalue = Set(uid.get._1 + uid.get._2)
           val acctRes = AccountResult(uid.get._1 + uid.get._2, m.email, m.api_key, m.authority)
-          play.api.Logger.debug(("%-20s -->[%s]").format("json with uid", acctRes.toJson(false)))
-
+          play.api.Logger.debug(("%-20s -->[%s]").format("json with uid", acctRes.toJson(false)))          
           val storeValue = riak.store(new GunnySack(m.email, acctRes.toJson(false), RiakConstants.CTYPE_TEXT_UTF8, None, Map(metadataKey -> metadataVal), Map((bindex, bvalue))))
           storeValue match {
             case Success(succ) => acctRes.some.successNel[Throwable]
@@ -116,6 +121,8 @@ object Accounts {
     }
 
   }
+
+  
   /**
    * Performs a fetch from Riak bucket. If there is an error then ServiceUnavailable is sent back.
    * If not, if there a GunnySack value, then it is parsed. When on parsing error, send back ResourceItemNotFound error.
@@ -133,7 +140,8 @@ object Accounts {
           }).toValidationNel.flatMap { xso: Option[GunnySack] =>
             xso match {
               case Some(xs) => {
-                (Validation.fromTryCatch {
+                (Validation.fromTryCatch[models.AccountResult] {
+                //  initiate_default_cloud(email)
                   parse(xs.value).extract[AccountResult]
                 } leftMap { t: Throwable =>
                   new ResourceItemNotFound(email, t.getMessage)
@@ -157,7 +165,7 @@ object Accounts {
     play.api.Logger.debug(("%-20s -->[%s]").format("accounts id", id))
     val metadataKey = "Field"
     val metadataVal = "1002"
-    val bindex = BinIndex.named("")
+    val bindex = ""
     val bvalue = Set("")
     val fetchValue = riak.fetchIndexByValue(new GunnySack("accountId", id,
       RiakConstants.CTYPE_TEXT_UTF8, None, Map(metadataKey -> metadataVal), Map((bindex, bvalue))))

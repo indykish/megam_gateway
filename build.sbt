@@ -10,20 +10,25 @@ import com.typesafe.sbt.packager.archetypes.ServerLoader.{SystemV, Upstart}
 scalaVersion := "2.10.4"
 
 scalacOptions := Seq(
-	"-target:jvm-1.7",
-	"-deprecation",
-	"-feature",
- 	"-optimise",
-  	"-Xcheckinit",
-  	"-Xlint",
-  	"-Xverify",
- // 	"-Yconst-opt",  	available in scala 2.11
-  	"-Yinline",
-  	"-Ywarn-all",
-  	"-Yclosure-elim",
-  	"-language:postfixOps",
-  	"-language:implicitConversions",
-  	"-Ydead-code")
+  "-target:jvm-1.7",
+  "-deprecation",
+  "-feature",
+  "-optimise",
+  "-Xcheckinit",
+  "-Xlint",
+  "-Xverify",
+  "-Yinline",
+  "-Yclosure-elim",
+  //"-Yconst-opt", 
+  //"-Ybackend:GenBCode",
+  //"closurify:delegating",
+  "-language:implicitConversions",
+  "-language:higherKinds",
+  "-language:reflectiveCalls",
+  "-language:postfixOps",
+  "-language:implicitConversions",
+  "-Ydead-code")
+
 
 incOptions := incOptions.value.withNameHashing(true)
 
@@ -48,7 +53,7 @@ daemonUser in Linux := "megam" // user which will execute the application
 
 daemonGroup in Linux := "megam"    // group which will execute the application
 
-debianPackageDependencies in Debian ++= Seq("curl", "nginx", "megamsnowflake", "apg","openjdk-7-jre-headless", "bash")
+debianPackageDependencies in Debian ++= Seq("curl", "megamcommon", "megamsnowflake", "apg","openjdk-7-jre-headless", "bash")
 
 debianPackageRecommends in Debian += "riak"
 
@@ -62,12 +67,17 @@ linuxPackageMappings <+= (normalizedName, daemonUser in Linux, daemonGroup in Li
 
 name in Docker := "megamgateway"
 
+maintainer in Docker := "Rajthilak <rajthilak@megam.co.in>"
+
 version in Docker <<= sbt.Keys.version
 
 dockerBaseImage := "dockerfile/java"
 
-dockerRepository := Some("indykish")
+dockerRepository := Some("gomegam")
 
 dockerExposedPorts in Docker := Seq(9000, 9443)
 
 dockerExposedVolumes in Docker := Seq("/opt/docker/logs")
+
+
+
